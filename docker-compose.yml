@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  made-in-china-scraper:
+    build: .
+    container_name: made-in-china-scraper
+    volumes:
+      # Mount data directory for persistent storage
+      - ./data:/app/data
+      # Mount logs directory
+      - ./logs:/app/logs
+      # Mount history directory
+      - ./history:/app/history
+    environment:
+      # Selenium settings
+      - DISPLAY=:99
+      - CHROME_BIN=/usr/bin/google-chrome
+      - CHROME_DRIVER_PATH=/usr/bin/chromedriver
+      # Python settings
+      - PYTHONUNBUFFERED=1
+    # Run in detached mode by default
+    # Use: docker-compose run --rm made-in-china-scraper python main.py search "keyword"
+    # Or: docker-compose run --rm made-in-china-scraper python main.py --help
+    command: ["python", "main.py", "--help"]
+    restart: unless-stopped
+
+
+
+
+
+
+
