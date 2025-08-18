@@ -16,3 +16,6 @@ logs/
 data/
 tools/
 
+# Personal notes (not for repo)
+daily_report_*.md
+
