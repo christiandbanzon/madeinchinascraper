@@ -1,0 +1,9 @@
+* text=auto
+
+# Force LF for shell scripts to avoid CRLF warnings
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Keep Windows-friendly for PowerShell
+*.ps1 text eol=crlf
+
