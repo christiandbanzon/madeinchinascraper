@@ -191,10 +191,6 @@ class DataManager:
         
         product_id = cursor.lastrowid
         
-        # Save seller information
-        if listing.seller:
-            self._save_seller_to_db(listing.seller, cursor)
-        
         # Save images
         for image in listing.images:
             cursor.execute('''
@@ -239,6 +235,9 @@ class DataManager:
     
     def _track_changes(self, new_listing: ProductListing, old_data, cursor):
         """Track changes between old and new data"""
+        # Align to current products schema: id(0), item_number(1), title(2), listing_url(3), sku(4),
+        # price(5), currency(6), min_order_quantity(7), max_order_quantity(8), description(9),
+        # specifications(10), scraped_at(11), last_updated(12)
         fields = [
             ('title', 2),
             ('listing_url', 3),
@@ -247,10 +246,7 @@ class DataManager:
             ('currency', 6),
             ('min_order_quantity', 7),
             ('max_order_quantity', 8),
-            ('units_available', 9),
-            ('brand', 10),
-            ('category', 11),
-            ('description', 12)
+            ('description', 9)
         ]
         
         for field_name, index in fields:
@@ -269,26 +265,7 @@ class DataManager:
                     datetime.now().isoformat()
                 ))
     
-    def _save_seller_to_db(self, seller: 'Seller', cursor):
-        """Save seller information to database"""
-        cursor.execute('''
-            INSERT OR REPLACE INTO sellers (
-                name, profile_url, profile_picture, rating, total_reviews,
-                business_name, country, address, email, verified, member_since
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            seller.name,
-            seller.profile_url,
-            seller.profile_picture,
-            seller.rating,
-            seller.total_reviews,
-            seller.business_name,
-            seller.country,
-            seller.address,
-            seller.email,
-            seller.verified,
-            seller.member_since
-        ))
+    # Removed unused _save_seller_to_db; seller info is not persisted in current schema
     
     def _save_search_result_to_json(self, search_result: SearchResult):
         """Save search result to JSON file"""
@@ -390,10 +367,9 @@ class DataManager:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT p.*, s.name as seller_name, s.profile_url, s.rating, s.total_reviews
-                    FROM products p
-                    LEFT JOIN sellers s ON p.seller_id = s.id
-                    WHERE p.title LIKE ? OR p.description LIKE ?
+                    SELECT *
+                    FROM products
+                    WHERE title LIKE ? OR description LIKE ?
                 ''', (f"%{keyword}%", f"%{keyword}%"))
                 
                 rows = cursor.fetchall()
@@ -414,16 +390,10 @@ class DataManager:
                         'currency': row[6],
                         'min_order_quantity': row[7],
                         'max_order_quantity': row[8],
-                        'units_available': row[9],
-                        'brand': row[10],
-                        'category': row[11],
-                        'description': row[12],
-                        'seller_name': row[16],
-                        'seller_profile_url': row[17],
-                        'seller_rating': row[18],
-                        'seller_total_reviews': row[19],
-                        'scraped_at': row[14],
-                        'last_updated': row[15]
+                        'description': row[9],
+                        'specifications': row[10],
+                        'scraped_at': row[11],
+                        'last_updated': row[12]
                     })
                 
                 # Export based on format
@@ -523,55 +493,9 @@ class DataManager:
             
         return listings
     
-    def _row_to_product_listing(self, row) -> Optional[ProductListing]:
-        """Convert database row to ProductListing object"""
-        try:
-            from models import Seller, ProductImage
-            
-            # Create seller object if seller data exists
-            seller = None
-            if row[16]:  # seller_name
-                seller = Seller(
-                    name=row[16],
-                    profile_url=row[17],
-                    profile_picture=row[18],
-                    rating=row[19],
-                    total_reviews=row[20],
-                    email=row[21],
-                    business_name=row[22],
-                    country=row[23],
-                    state_province=row[24],
-                    zip_code=row[25],
-                    phone=row[26],
-                    address=row[27],
-                    verified=row[28],
-                    member_since=row[29]
-                )
-            
-            # Create ProductListing object
-            listing = ProductListing(
-                title=row[2],
-                listing_url=row[3],
-                item_number=row[1],
-                sku=row[4],
-                price=row[5],
-                currency=row[6],
-                min_order_quantity=row[7],
-                max_order_quantity=row[8],
-                # units_available=row[9],  # Removed units_available field
-                # brand=row[10],  # Removed brand field
-                # category=row[11],  # Removed category field
-                description=row[12],
-                seller=seller,
-                scraped_at=datetime.fromisoformat(row[14]) if row[14] else None,
-                last_updated=datetime.fromisoformat(row[15]) if row[15] else None
-            )
-            
-            return listing
-            
-        except Exception as e:
-            logger.error(f"Error converting row to ProductListing: {e}")
-            return None
+    # def _row_to_product_listing(self, row) -> Optional[ProductListing]:
+    #     """Deprecated: old schema with joined seller fields; keeping stub for reference."""
+    #     return None
     
     def _row_to_product_listing_simple(self, row) -> Optional[ProductListing]:
         """Convert simple database row to ProductListing object"""
@@ -588,13 +512,10 @@ class DataManager:
                 currency=row[6],
                 min_order_quantity=row[7],
                 max_order_quantity=row[8],
-                # units_available=row[9],  # Removed units_available field
-                # brand=row[10],  # Removed brand field
-                # category=row[11],  # Removed category field
-                description=row[12],
+                description=row[9],
                 seller=None,  # Seller info is not stored in products table
-                scraped_at=datetime.fromisoformat(row[14]) if row[14] else None,
-                last_updated=datetime.fromisoformat(row[15]) if row[15] else None
+                scraped_at=datetime.fromisoformat(row[11]) if row[11] else None,
+                last_updated=datetime.fromisoformat(row[12]) if row[12] else None
             )
             
             return listing
