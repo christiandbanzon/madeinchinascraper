@@ -15,6 +15,7 @@ from loguru import logger
 from datetime import datetime
 
 from config import HEADERS, SELENIUM_TIMEOUT, SELENIUM_IMPLICIT_WAIT, REQUEST_DELAY, SEARCH_URL
+from pdf_extractor import PDFExtractor
 from models import ProductListing, Seller, ProductImage, SearchResult
 
 class MadeInChinaScraper:
@@ -25,6 +26,7 @@ class MadeInChinaScraper:
         self.session.headers.update(HEADERS)
         self.use_selenium = use_selenium
         self.driver = None
+        self.pdf_extractor = PDFExtractor(self.session)
         
         if use_selenium:
             self._setup_selenium()
@@ -1186,49 +1188,10 @@ class MadeInChinaScraper:
             # Limit to first 3 certificates to avoid too many requests
             for cert_url in certificate_images[:3]:
                 try:
-                    logger.debug(f"Clicking certificate image: {cert_url}")
-                    
-                    # Click on the certificate image to get the PDF
-                    response = requests.get(cert_url, headers=HEADERS, timeout=15)
-                    response.raise_for_status()
-                    
-                    # Check if the response is a PDF
-                    if 'application/pdf' in response.headers.get('content-type', ''):
-                        # Extract text from PDF
-                        pdf_text = self._extract_text_from_pdf(response.content)
-                        
-                        if pdf_text:
-                            # Look for email patterns in PDF text
-                            email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', pdf_text)
-                            if email_match:
-                                email = email_match.group(0)
-                                logger.debug(f"Found email in certificate PDF: {email}")
-                                return email
-                    else:
-                        # If not a PDF, it might be a page with embedded PDF
-                        cert_soup = BeautifulSoup(response.content, 'html.parser')
-                        
-                        # Look for embedded PDF or iframe
-                        pdf_embed = cert_soup.find('embed', attrs={'type': 'application/pdf'})
-                        pdf_iframe = cert_soup.find('iframe', attrs={'src': lambda x: x and '.pdf' in x})
-                        
-                        if pdf_embed:
-                            pdf_src = pdf_embed.get('src')
-                            if pdf_src:
-                                pdf_response = requests.get(pdf_src, headers=HEADERS, timeout=15)
-                                pdf_text = self._extract_text_from_pdf(pdf_response.content)
-                                if pdf_text:
-                                    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', pdf_text)
-                                    if email_match:
-                                        return email_match.group(0)
-                        
-                        # Also look for emails in the certificate page text
-                        page_text = cert_soup.get_text()
-                        email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', page_text)
-                        if email_match:
-                            email = email_match.group(0)
-                            logger.debug(f"Found email in certificate page: {email}")
-                            return email
+                    logger.debug(f"Analyzing certificate: {cert_url}")
+                    analysis = self.pdf_extractor.analyze_url(cert_url)
+                    if analysis.get('emails'):
+                        return analysis['emails'][0]
                     
                     # Add delay between certificate clicks
                     time.sleep(2)
@@ -1242,46 +1205,7 @@ class MadeInChinaScraper:
         
         return None
 
-    def _extract_text_from_pdf(self, pdf_content: bytes) -> Optional[str]:
-        """Extract text content from PDF bytes"""
-        try:
-            # Try using PyPDF2 if available
-            try:
-                import PyPDF2
-                import io
-                
-                pdf_file = io.BytesIO(pdf_content)
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
-                
-                text = ""
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + " "
-                
-                return text
-                
-            except ImportError:
-                logger.debug("PyPDF2 not available, trying alternative method")
-                
-            # Fallback: try using pdfplumber if available
-            try:
-                import pdfplumber
-                import io
-                
-                pdf_file = io.BytesIO(pdf_content)
-                with pdfplumber.open(pdf_file) as pdf:
-                    text = ""
-                    for page in pdf.pages:
-                        text += page.extract_text() + " "
-                
-                return text
-                
-            except ImportError:
-                logger.debug("pdfplumber not available, PDF text extraction not possible")
-                
-        except Exception as e:
-            logger.debug(f"Error extracting text from PDF: {e}")
-        
-        return None
+    # PDF text extraction is now handled by PDFExtractor
 
     def _extract_email_selenium(self, driver) -> Optional[str]:
         """Extract seller email from certificates, PDFs, and contact sections using Selenium"""
