@@ -405,6 +405,8 @@ def main():
     cert_analysis_parser = subparsers.add_parser("analyze_certs", help="Analyze certificate PDFs for email addresses")
     cert_analysis_parser.add_argument("url", help="Company profile URL to analyze certificates for")
     cert_analysis_parser.add_argument("--selenium", action="store_true", help="Use Selenium for scraping")
+
+    # (Removed walmart_seller command)
     
     args = parser.parse_args()
     
@@ -429,6 +431,7 @@ def main():
             run_scheduled_search(args.keywords, args.interval)
         elif args.command == "analyze_certs":
             analyze_certificates(args.url, args.selenium)
+        # walmart_seller command removed
             
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")

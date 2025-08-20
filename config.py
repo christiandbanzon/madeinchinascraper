@@ -50,3 +50,7 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = os.getenv("LOG_FORMAT", "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
 
+"""
+Note: third-party API keys are intentionally not configured here.
+"""
+
