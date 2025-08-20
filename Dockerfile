@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     unzip \
     curl \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chrome and ChromeDriver for Selenium
@@ -41,6 +42,9 @@ EXPOSE 8000
 
 # Set the default command
 CMD ["python", "main.py", "--help"]
+
+
+
 
 
 

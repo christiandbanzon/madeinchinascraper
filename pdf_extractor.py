@@ -43,6 +43,14 @@ class PDFExtractor:
                 result["emails"] = emails
                 return result
 
+            # Handle images (OCR)
+            if content_type.startswith("image/") or any(url.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff")):
+                text = self._extract_text_from_image_bytes(response.content)
+                emails = self._extract_emails_from_text(text) if text else []
+                result["type"] = "IMAGE"
+                result["emails"] = emails
+                return result
+
             # Fallback: page may contain embedded PDF or links
             soup = BeautifulSoup(response.content, "html.parser")
 
@@ -62,6 +70,14 @@ class PDFExtractor:
                 href = a.get("href") or ""
                 if ".pdf" in href.lower():
                     pdf_srcs.append(href)
+
+            # Collect likely certificate images to OCR
+            img_srcs: List[str] = []
+            for img in soup.find_all("img"):
+                src = img.get("src") or ""
+                alt = (img.get("alt") or "").lower()
+                if any(k in alt for k in ("certificate", "cert", "cb", "ce", "gs")) or any(src.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")):
+                    img_srcs.append(src)
 
             # Deduplicate while preserving order
             seen = set()
@@ -87,6 +103,32 @@ class PDFExtractor:
                     time.sleep(1)
                 except Exception as inner_err:  # noqa: BLE001
                     logger.debug(f"Error fetching embedded PDF {pdf_url}: {inner_err}")
+
+            # OCR top N images if present
+            seen_img = set()
+            unique_img_srcs: List[str] = []
+            for src in img_srcs:
+                if not src:
+                    continue
+                abs_src = self._absolutize(url, src)
+                if abs_src not in seen_img:
+                    seen_img.add(abs_src)
+                    unique_img_srcs.append(abs_src)
+
+            for img_url in unique_img_srcs[:3]:
+                try:
+                    img_resp = self.session.get(img_url, timeout=self.request_timeout_seconds)
+                    img_resp.raise_for_status()
+                    text = self._extract_text_from_image_bytes(img_resp.content)
+                    emails = self._extract_emails_from_text(text) if text else []
+                    if emails:
+                        result["type"] = "IMAGE"
+                        result["emails"] = emails
+                        result["url"] = img_url
+                        return result
+                    time.sleep(1)
+                except Exception as inner_err:  # noqa: BLE001
+                    logger.debug(f"Error OCR image {img_url}: {inner_err}")
 
             # Last resort: try to find emails directly on the landing page text
             page_text = soup.get_text(separator=" ", strip=True)
@@ -177,5 +219,29 @@ class PDFExtractor:
         except Exception:  # noqa: BLE001
             logger.debug("pdfplumber failed to extract text")
             return None
+
+    @staticmethod
+    def _extract_text_from_image_bytes(image_bytes: bytes) -> Optional[str]:
+        """Run OCR on image content using Tesseract via pytesseract."""
+        if not image_bytes:
+            return None
+        try:
+            from PIL import Image
+            import pytesseract
+
+            with io.BytesIO(image_bytes) as bio:
+                img = Image.open(bio)
+                # Convert to RGB for safety (some formats are palette/CMYK)
+                try:
+                    img = img.convert("RGB")
+                except Exception:  # noqa: BLE001
+                    pass
+                text = pytesseract.image_to_string(img)
+                text = (text or "").strip()
+                return text or None
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"OCR failed: {e}")
+            return None
+
 
 
