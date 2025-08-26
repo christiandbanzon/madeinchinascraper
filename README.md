@@ -1,5 +1,49 @@
 # Made-in-China.com Scraper
 
+## Project structure
+
+```
+.
+├─ src/                 # application code
+│  ├─ app.py            # CLI implementation
+│  ├─ config.py         # settings (env-driven)
+│  ├─ data_manager.py   # storage, exports, DB
+│  ├─ models.py         # dataclasses
+│  ├─ pdf_extractor.py  # PDF/image email extraction (OCR)
+│  └─ scraper.py        # scraper logic
+├─ cli/
+│  └─ main.py           # entrypoint: python -m cli.main
+├─ scripts/             # utility scripts
+├─ docs/                # docs and deployment notes
+├─ examples/            # example HTML and artifacts
+├─ docker-compose.yml   # runs the service
+├─ Dockerfile           # container image
+├─ .env.example         # sample env
+└─ .gitignore           # ignores data/, logs/, history/
+```
+
+## Quick start
+
+Local:
+```bash
+python -m venv .venv && . .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+pip install -r requirements.txt
+cp .env.example .env
+python -m cli.main --help
+python -m cli.main search "nike shoes" --max-pages 1
+```
+
+Docker:
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Common commands:
+```bash
+python -m cli.main analyze_certs "<seller_profile_url>" --selenium
+python -m cli.main export "keyword" --format csv
+```
 A comprehensive web scraping solution for extracting product and seller data from Made-in-China.com. This system is designed to handle keyword-based searches, track historical changes, and export data in multiple formats.
 
 ## Features
