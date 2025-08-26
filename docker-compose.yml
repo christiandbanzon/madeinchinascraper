@@ -15,7 +15,7 @@ services:
       CHROME_BIN: ${CHROME_BIN:-/usr/bin/google-chrome}
       CHROME_DRIVER_PATH: ${CHROME_DRIVER_PATH:-/usr/bin/chromedriver}
       PYTHONUNBUFFERED: "1"
-    command: ["sh", "-c", "${AUTO_CMD:-python main.py --help}"]
+    command: ["sh", "-c", "${AUTO_CMD:-python -m cli.main --help}"]
     restart: unless-stopped
 
 

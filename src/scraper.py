@@ -14,9 +14,9 @@ from fake_useragent import UserAgent
 from loguru import logger
 from datetime import datetime
 
-from config import HEADERS, SELENIUM_TIMEOUT, SELENIUM_IMPLICIT_WAIT, REQUEST_DELAY, SEARCH_URL
-from pdf_extractor import PDFExtractor
-from models import ProductListing, Seller, ProductImage, SearchResult
+from src.config import HEADERS, SELENIUM_TIMEOUT, SELENIUM_IMPLICIT_WAIT, REQUEST_DELAY, SEARCH_URL
+from src.pdf_extractor import PDFExtractor
+from src.models import ProductListing, Seller, ProductImage, SearchResult
 
 class MadeInChinaScraper:
     """Scraper for Made-in-China.com"""
@@ -2878,6 +2878,36 @@ class MadeInChinaScraper:
             time.sleep(3)
             
             certificates = []
+
+            # Click-through: attempt to click certificate thumbnails and capture resulting asset URLs
+            clickable_thumb_selectors = [
+                "[class*='cert'] img",
+                ".certificate img",
+                ".certificates img",
+                ".quality-certificates img",
+                "img[alt*='cert' i]",
+            ]
+
+            for selector in clickable_thumb_selectors:
+                try:
+                    thumbs = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for thumb in thumbs[:6]:  # limit
+                        try:
+                            self._safe_click(thumb)
+                            time.sleep(1.5)
+                            # Look for modal embeds/images/iframes
+                            asset = self._capture_modal_asset_url()
+                            if asset and self._is_likely_cert_asset(asset):
+                                certificates.append({
+                                    'name': thumb.get_attribute('alt') or 'Certificate',
+                                    'url': asset,
+                                    'type': 'image' if any(asset.lower().endswith(ext) for ext in ('.png','.jpg','.jpeg','.webp','.bmp','.tif','.tiff')) else 'link'
+                                })
+                            self._dismiss_modal_if_any()
+                        except Exception:
+                            continue
+                except NoSuchElementException:
+                    continue
             
             # Look for certificate sections and images
             cert_selectors = [
@@ -2922,7 +2952,9 @@ class MadeInChinaScraper:
                     for element in elements:
                         cert_info = self._extract_certificate_info_selenium(element, company_url)
                         if cert_info:
-                            certificates.append(cert_info)
+                            # Filter non-signal assets (transparent or icons)
+                            if self._is_likely_cert_asset(cert_info.get('url')):
+                                certificates.append(cert_info)
                 except NoSuchElementException:
                     continue
             
@@ -2957,6 +2989,56 @@ class MadeInChinaScraper:
         except Exception as e:
             logger.error(f"Error extracting certificate PDFs with Selenium: {e}")
             return []
+
+    def _safe_click(self, element) -> None:
+        try:
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", element)
+            element.click()
+        except Exception:
+            try:
+                self.driver.execute_script("arguments[0].click();", element)
+            except Exception:
+                pass
+
+    def _capture_modal_asset_url(self) -> Optional[str]:
+        """Try to read asset URL presented in modal/new content: embed, iframe, img src."""
+        try:
+            # Common modal containers
+            candidates = self.driver.find_elements(By.CSS_SELECTOR, "embed[type='application/pdf'], iframe, img")
+            for el in candidates:
+                src = el.get_attribute('src') or el.get_attribute('data-src') or ''
+                if src:
+                    return src
+        except Exception:
+            return None
+        return None
+
+    def _dismiss_modal_if_any(self) -> None:
+        try:
+            close_buttons = self.driver.find_elements(By.CSS_SELECTOR, ".close, .modal-close, .ant-modal-close, .btn-close")
+            for btn in close_buttons:
+                try:
+                    btn.click()
+                    time.sleep(0.3)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    def _is_likely_cert_asset(self, url: Optional[str]) -> bool:
+        if not url:
+            return False
+        # Block-list non-signal assets
+        lower = url.lower()
+        if any(x in lower for x in [
+            'transparent.png', '/athena/img/transparent', 'micstatic.com/common/img/icon', '/sprite', '/icons/', '/favicon'
+        ]):
+            return False
+        # Allow-list hosts/extensions
+        allowed_hosts = ['image.made-in-china.com', 'made-in-china.com', 'micstatic.com', 'sgsgroup.com']
+        if not any(h in lower for h in allowed_hosts):
+            return False
+        return True
 
     def _find_certificate_url_for_type(self, soup: BeautifulSoup, cert_type: str, base_url: str) -> Optional[str]:
         """Find the actual certificate URL for a specific certificate type"""

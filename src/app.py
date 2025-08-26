@@ -15,10 +15,9 @@ import json
 import csv
 from datetime import datetime
 
-from config import LOG_LEVEL, LOG_FORMAT
-from scraper import MadeInChinaScraper
-from data_manager import DataManager
-from scraper import SearchResult
+from src.config import LOG_LEVEL, LOG_FORMAT
+from src.scraper import MadeInChinaScraper, SearchResult
+from src.data_manager import DataManager
 
 def setup_logging():
     """Setup logging configuration"""

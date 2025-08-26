@@ -59,3 +59,12 @@ echo "🕒 History will be saved in the ./history directory"
 
 
 
+
+
+
+
+
+
+
+
+

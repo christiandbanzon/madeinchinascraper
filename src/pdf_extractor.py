@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from config import HEADERS
+from src.config import HEADERS
 
 
 class PDFExtractor:
@@ -160,21 +160,30 @@ class PDFExtractor:
 
     @staticmethod
     def _absolutize(base_url: str, ref: str) -> str:
+        from urllib.parse import urlparse, urljoin
         try:
-            if ref.startswith("http://") or ref.startswith("https://"):
+            if not ref:
                 return ref
+            # Already absolute
+            if re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*://', ref):
+                return ref
+            # Protocol-relative
             if ref.startswith("//"):
                 return "https:" + ref
-            # naive join
-            if ref.startswith("/"):
-                from urllib.parse import urlparse
-
-                p = urlparse(base_url)
-                return f"{p.scheme}://{p.netloc}{ref}"
-            # relative path
-            if base_url.endswith("/"):
-                return base_url + ref
-            return base_url.rsplit("/", 1)[0] + "/" + ref
+            # Bare domain without scheme (e.g. image.made-in-china.com/path)
+            if re.match(r'^[A-Za-z0-9.-]+\.[A-Za-z]{2,}($|/|\?)', ref):
+                return "https://" + ref.lstrip('/')
+            # Otherwise, standard URL join
+            joined = urljoin(base_url if base_url.endswith('/') else base_url + '/', ref)
+            # Fix double host patterns like https://host/https://other/...
+            m = re.match(r'^(https?://[^/]+)/(https?://.+)$', joined)
+            if m:
+                return m.group(2)
+            # Fix accidental host-in-path like https://host/www.micstatic.com/...
+            host_in_path = re.match(r'^(https?://[^/]+)/(www\.[^/]+/.+)$', joined)
+            if host_in_path:
+                return "https://" + host_in_path.group(2)
+            return joined
         except Exception:  # noqa: BLE001
             return ref
 
@@ -236,7 +245,18 @@ class PDFExtractor:
                     img = img.convert("RGB")
                 except Exception:  # noqa: BLE001
                     pass
-                text = pytesseract.image_to_string(img)
+                # Basic preprocessing: grayscale + threshold
+                try:
+                    gray = img.convert('L')
+                    # Simple global threshold
+                    bw = gray.point(lambda p: 255 if p > 180 else 0, '1')
+                    text = pytesseract.image_to_string(bw, config='--psm 6')
+                    if not text.strip():
+                        text = pytesseract.image_to_string(gray, config='--psm 6')
+                    if not text.strip():
+                        text = pytesseract.image_to_string(img, config='--oem 1 --psm 6')
+                except Exception:
+                    text = pytesseract.image_to_string(img)
                 text = (text or "").strip()
                 return text or None
         except Exception as e:  # noqa: BLE001

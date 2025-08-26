@@ -84,3 +84,12 @@ Write-Host "🕒 History will be saved in the ./history directory" -ForegroundCo
 
 
 
+
+
+
+
+
+
+
+
+

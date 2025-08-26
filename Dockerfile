@@ -41,7 +41,7 @@ ENV CHROME_DRIVER_PATH=/usr/bin/chromedriver
 EXPOSE 8000
 
 # Set the default command
-CMD ["python", "main.py", "--help"]
+CMD ["python", "-m", "cli.main", "--help"]
 
 
 

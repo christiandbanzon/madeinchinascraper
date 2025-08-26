@@ -8,8 +8,8 @@ from pathlib import Path
 import os
 from loguru import logger
 
-from config import DATA_DIR, HISTORY_DIR, DATABASE_PATH, EXPORT_FORMATS
-from models import ProductListing, SearchResult, HistoryEntry
+from src.config import DATA_DIR, HISTORY_DIR, DATABASE_PATH, EXPORT_FORMATS
+from src.models import ProductListing, SearchResult, HistoryEntry
 
 class DataManager:
     """Manages data storage, history tracking, and exports"""
