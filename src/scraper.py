@@ -8,6 +8,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 from fake_useragent import UserAgent
@@ -16,6 +17,7 @@ from datetime import datetime
 
 from src.config import HEADERS, SELENIUM_TIMEOUT, SELENIUM_IMPLICIT_WAIT, REQUEST_DELAY, SEARCH_URL
 from src.pdf_extractor import PDFExtractor
+from src.obfuscation import extract_emails_with_obfuscation
 from src.models import ProductListing, Seller, ProductImage, SearchResult
 
 class MadeInChinaScraper:
@@ -24,6 +26,22 @@ class MadeInChinaScraper:
     def __init__(self, use_selenium: bool = False):
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
+        # Robust retries/backoff for transient errors
+        try:
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            retry = Retry(
+                total=5,
+                backoff_factor=0.6,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["GET", "HEAD"],
+            )
+            adapter = HTTPAdapter(max_retries=retry)
+            self.session.mount("http://", adapter)
+            self.session.mount("https://", adapter)
+        except Exception:
+            pass
         self.use_selenium = use_selenium
         self.driver = None
         self.pdf_extractor = PDFExtractor(self.session)
@@ -40,10 +58,10 @@ class MadeInChinaScraper:
             chrome_options.add_argument("--disable-dev-shm-usage")
             chrome_options.add_argument("--disable-gpu")
             chrome_options.add_argument(f"--user-agent={UserAgent().random}")
-            
-            self.driver = webdriver.Chrome(
-                options=chrome_options
-            )
+            # Enable DevTools performance logging for network capture
+            caps = DesiredCapabilities.CHROME.copy()
+            caps["goog:loggingPrefs"] = {"performance": "ALL"}
+            self.driver = webdriver.Chrome(options=chrome_options, desired_capabilities=caps)
             self.driver.implicitly_wait(SELENIUM_IMPLICIT_WAIT)
             logger.info("Selenium WebDriver initialized successfully")
         except Exception as e:
@@ -284,6 +302,8 @@ class MadeInChinaScraper:
             
             # Extract other details from listing page
             min_order_quantity = self._extract_min_order_quantity(product_element)
+            units_available = None  # Placeholder; site rarely shows exact stock
+            brand = self._extract_brand(product_element)
             description = self._extract_description(product_element)
             
             # Get detailed product information from individual product page
@@ -314,6 +334,8 @@ class MadeInChinaScraper:
                 item_number=item_number,
                 sku=sku,
                 price=price,
+                brand=brand,
+                units_available=units_available,
                 images=images,
                 seller=seller,
                 min_order_quantity=min_order_quantity,
@@ -1120,10 +1142,10 @@ class MadeInChinaScraper:
                 elements = soup.select(selector)
                 for element in elements:
                     text = element.get_text()
-                    # Find email pattern in certificate text
-                    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
-                    if email_match:
-                        return email_match.group(0)
+                    # Find email pattern in certificate text with obfuscation decoding
+                    emails = extract_emails_with_obfuscation(text)
+                    if emails:
+                        return emails[0]
             
             # Fallback: look for email in contact sections
             contact_selectors = [
@@ -1138,10 +1160,9 @@ class MadeInChinaScraper:
                 elements = soup.select(selector)
                 for element in elements:
                     text = element.get_text()
-                    # Find email pattern
-                    email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
-                    if email_match:
-                        return email_match.group(0)
+                    emails = extract_emails_with_obfuscation(text)
+                    if emails:
+                        return emails[0]
         except Exception as e:
             logger.debug(f"Error extracting email: {e}")
         return None
@@ -3009,6 +3030,18 @@ class MadeInChinaScraper:
                 src = el.get_attribute('src') or el.get_attribute('data-src') or ''
                 if src:
                     return src
+            # Fallback: scan performance logs for PDF/image requests
+            try:
+                import json as _json
+                logs = self.driver.get_log("performance")
+                for entry in logs:
+                    msg = _json.loads(entry.get("message", "{}")).get("message", {})
+                    if msg.get("method") == "Network.requestWillBeSent":
+                        url = msg.get("params", {}).get("request", {}).get("url", "")
+                        if any(ext in url.lower() for ext in [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"]):
+                            return url
+            except Exception:
+                pass
         except Exception:
             return None
         return None

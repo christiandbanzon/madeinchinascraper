@@ -7,7 +7,9 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from src.config import HEADERS
+from src.config import HEADERS, DATA_DIR
+import os
+import hashlib
 
 
 class PDFExtractor:
@@ -40,15 +42,29 @@ class PDFExtractor:
             if "application/pdf" in content_type or url.lower().endswith(".pdf"):
                 text = self._extract_text_from_pdf_bytes(response.content)
                 emails = self._extract_emails_from_text(text) if text else []
-                result["emails"] = emails
+                sha, saved_path = self._persist_asset(response.content, suggested_ext=".pdf")
+                result.update({
+                    "emails": emails,
+                    "sha256": sha,
+                    "content_type": content_type,
+                    "size_bytes": len(response.content),
+                    "saved_path": saved_path,
+                })
                 return result
 
             # Handle images (OCR)
             if content_type.startswith("image/") or any(url.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff")):
                 text = self._extract_text_from_image_bytes(response.content)
                 emails = self._extract_emails_from_text(text) if text else []
+                sha, saved_path = self._persist_asset(response.content, suggested_ext=self._guess_ext_from_ct(content_type) or ".img")
                 result["type"] = "IMAGE"
-                result["emails"] = emails
+                result.update({
+                    "emails": emails,
+                    "sha256": sha,
+                    "content_type": content_type,
+                    "size_bytes": len(response.content),
+                    "saved_path": saved_path,
+                })
                 return result
 
             # Fallback: page may contain embedded PDF or links
@@ -97,8 +113,15 @@ class PDFExtractor:
                     text = self._extract_text_from_pdf_bytes(pdf_resp.content)
                     emails = self._extract_emails_from_text(text) if text else []
                     if emails:
-                        result["emails"] = emails
-                        result["url"] = pdf_url
+                        sha, saved_path = self._persist_asset(pdf_resp.content, suggested_ext=".pdf")
+                        result.update({
+                            "emails": emails,
+                            "url": pdf_url,
+                            "sha256": sha,
+                            "content_type": pdf_resp.headers.get("content-type", ""),
+                            "size_bytes": len(pdf_resp.content),
+                            "saved_path": saved_path,
+                        })
                         return result
                     time.sleep(1)
                 except Exception as inner_err:  # noqa: BLE001
@@ -122,9 +145,16 @@ class PDFExtractor:
                     text = self._extract_text_from_image_bytes(img_resp.content)
                     emails = self._extract_emails_from_text(text) if text else []
                     if emails:
+                        sha, saved_path = self._persist_asset(img_resp.content, suggested_ext=self._guess_ext_from_ct(img_resp.headers.get("content-type", "")) or ".img")
                         result["type"] = "IMAGE"
-                        result["emails"] = emails
-                        result["url"] = img_url
+                        result.update({
+                            "emails": emails,
+                            "url": img_url,
+                            "sha256": sha,
+                            "content_type": img_resp.headers.get("content-type", ""),
+                            "size_bytes": len(img_resp.content),
+                            "saved_path": saved_path,
+                        })
                         return result
                     time.sleep(1)
                 except Exception as inner_err:  # noqa: BLE001
@@ -234,6 +264,29 @@ class PDFExtractor:
         """Run OCR on image content using Tesseract via pytesseract."""
         if not image_bytes:
             return None
+
+    @staticmethod
+    def _guess_ext_from_ct(content_type: str) -> Optional[str]:
+        ct = (content_type or '').lower()
+        if 'png' in ct: return '.png'
+        if 'jpeg' in ct or 'jpg' in ct: return '.jpg'
+        if 'webp' in ct: return '.webp'
+        if 'tiff' in ct or 'tif' in ct: return '.tiff'
+        if 'gif' in ct: return '.gif'
+        if 'pdf' in ct: return '.pdf'
+        return None
+
+    @staticmethod
+    def _persist_asset(content: bytes, suggested_ext: str = ".bin") -> tuple[str, str]:
+        sha = hashlib.sha256(content).hexdigest()
+        assets_dir = os.path.join(DATA_DIR, "assets")
+        os.makedirs(assets_dir, exist_ok=True)
+        filename = f"{sha}{suggested_ext}"
+        path = os.path.join(assets_dir, filename)
+        if not os.path.exists(path):
+            with open(path, 'wb') as f:
+                f.write(content)
+        return sha, path
         try:
             from PIL import Image
             import pytesseract
@@ -258,6 +311,16 @@ class PDFExtractor:
                 except Exception:
                     text = pytesseract.image_to_string(img)
                 text = (text or "").strip()
+                # Try QR code decoding for hidden contact info
+                try:
+                    from pyzbar.pyzbar import decode as qr_decode
+                    decoded = qr_decode(img)
+                    if decoded:
+                        qr_texts = [d.data.decode('utf-8', errors='ignore') for d in decoded]
+                        # Append QR payloads to OCR text
+                        text = (text + "\n" + "\n".join(qr_texts)).strip()
+                except Exception:
+                    pass
                 return text or None
         except Exception as e:  # noqa: BLE001
             logger.debug(f"OCR failed: {e}")

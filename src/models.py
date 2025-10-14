@@ -21,6 +21,9 @@ class Seller:
     business_name: Optional[str] = None
     country: Optional[str] = None
     address: Optional[str] = None
+    state_province: Optional[str] = None
+    zip_code: Optional[str] = None
+    phone: Optional[str] = None
     email: Optional[str] = None
     verified: Optional[bool] = None
     member_since: Optional[str] = None
@@ -41,6 +44,8 @@ class ProductListing:
     max_order_quantity: Optional[int] = None
     
     # Product details
+    brand: Optional[str] = None
+    units_available: Optional[int] = None
     description: Optional[str] = None
     specifications: Optional[Dict[str, Any]] = None
     

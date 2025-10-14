@@ -268,54 +268,58 @@ class DataManager:
     # Removed unused _save_seller_to_db; seller info is not persisted in current schema
     
     def _save_search_result_to_json(self, search_result: SearchResult):
-        """Save search result to JSON file"""
+        """Save search result to JSON file in standardized marketplace schema"""
         timestamp = search_result.scraped_at.strftime("%Y%m%d_%H%M%S")
         filename = f"search_{search_result.keyword}_{timestamp}.json"
         filepath = self.data_dir / filename
         
+        rows = [self._listing_to_marketplace_row(listing) for listing in search_result.listings]
         with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(search_result.to_json())
+            json.dump(rows, f, indent=2, ensure_ascii=False)
         
         logger.info(f"Saved JSON file: {filepath}")
     
     def _save_search_result_to_csv(self, search_result: SearchResult):
-        """Save search result to CSV file"""
+        """Save search result to CSV file in standardized marketplace schema"""
         timestamp = search_result.scraped_at.strftime("%Y%m%d_%H%M%S")
         filename = f"search_{search_result.keyword}_{timestamp}.csv"
         filepath = self.data_dir / filename
         
-        # Prepare data for CSV
-        csv_data = []
-        for listing in search_result.listings:
-            row = {
-                'keyword': search_result.keyword,
-                'title': listing.title,
-                'listing_url': listing.listing_url,
-                'item_number': listing.item_number,
-                'sku': listing.sku,
-                'price': listing.price,
-                'currency': listing.currency,
-                'min_order_quantity': listing.min_order_quantity,
-                'max_order_quantity': listing.max_order_quantity,
-                'description': listing.description,
-                'seller_name': listing.seller.name if listing.seller else None,
-                'seller_profile_url': listing.seller.profile_url if listing.seller else None,
-                'seller_rating': listing.seller.rating if listing.seller else None,
-                'seller_total_reviews': listing.seller.total_reviews if listing.seller else None,
-                'seller_business_name': listing.seller.business_name if listing.seller else None,
-                'seller_country': listing.seller.country if listing.seller else None,
-                'seller_address': listing.seller.address if listing.seller else None,
-                'seller_email': listing.seller.email if listing.seller else None,
-                'scraped_at': listing.scraped_at.isoformat(),
-                'last_updated': listing.last_updated.isoformat() if listing.last_updated else None
-            }
-            csv_data.append(row)
-        
-        # Write to CSV
-        if csv_data:
-            df = pd.DataFrame(csv_data)
+        # Prepare data for CSV (standardized columns)
+        csv_rows = [self._listing_to_marketplace_row(listing) for listing in search_result.listings]
+        if csv_rows:
+            df = pd.DataFrame(csv_rows)
+            # Preserve column order
+            columns = [
+                'Listing Title','Listing URL','Image URL','Marketplace',
+                'Price','Currency','Shipping','Units Available','Item Number',
+                "Seller Name","Seller URL","Seller Business","Seller Address","Seller Email","Seller Phone"
+            ]
+            df = df.reindex(columns=columns)
             df.to_csv(filepath, index=False, encoding='utf-8')
             logger.info(f"Saved CSV file: {filepath}")
+
+    def _listing_to_marketplace_row(self, listing: 'ProductListing') -> Dict[str, Any]:
+        """Map internal listing model to standardized marketplace row schema."""
+        first_image = listing.images[0].url if listing.images else None
+        seller = listing.seller
+        return {
+            'Listing Title': listing.title,
+            'Listing URL': listing.listing_url,
+            'Image URL': first_image,
+            'Marketplace': 'Made-in-China',
+            'Price': listing.price,
+            'Currency': listing.currency,
+            'Shipping': None,
+            'Units Available': listing.units_available,
+            'Item Number': listing.item_number,
+            'Seller Name': seller.name if seller else None,
+            'Seller URL': seller.profile_url if seller else None,
+            'Seller Business': getattr(seller, 'business_name', None) if seller else None,
+            'Seller Address': getattr(seller, 'address', None) if seller else None,
+            'Seller Email': getattr(seller, 'email', None) if seller else None,
+            'Seller Phone': getattr(seller, 'phone', None) if seller else None,
+        }
     
     def get_history(self, item_number: str, field_name: Optional[str] = None) -> List[HistoryEntry]:
         """Get history for a specific item and optionally field"""
