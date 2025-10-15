@@ -42,8 +42,8 @@ DATABASE_PATH = os.path.join(DATA_DIR, os.getenv("DATABASE_FILENAME", "made_in_c
 # Export settings
 EXPORT_FORMATS = ["json", "csv"]
 
-# Rate limiting (overridable via env)
-REQUEST_DELAY = int(os.getenv("REQUEST_DELAY", "2"))
+# Rate limiting (overridable via env) - lowered default for faster dev runs
+REQUEST_DELAY = int(os.getenv("REQUEST_DELAY", "1"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 # Logging (overridable via env)
