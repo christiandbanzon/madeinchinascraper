@@ -291,35 +291,104 @@ class DataManager:
             df = pd.DataFrame(csv_rows)
             # Preserve column order
             columns = [
-                'Listing Title','Listing URL','Image URL','Marketplace',
-                'Price','Currency','Shipping','Units Available','Item Number',
-                "Seller Name","Seller URL","Seller Business","Seller Address","Seller Email","Seller Phone"
+                'Listing Title','Listing URL','Image URL','All Image URLs','Marketplace',
+                'Price','Currency','Shipping','Units Available','Item Number','HS Code','Brand',
+                'Seller Name','Seller URL','Seller Business','Seller Address','Seller State/Province','Seller Zip Code','Seller Profile Picture','Seller Email','Seller Phone'
             ]
             df = df.reindex(columns=columns)
+            # Normalize multi-line text fields for portability
+            df = df.applymap(lambda v: self._normalize_whitespace(v) if isinstance(v, str) else v)
             df.to_csv(filepath, index=False, encoding='utf-8')
             logger.info(f"Saved CSV file: {filepath}")
 
     def _listing_to_marketplace_row(self, listing: 'ProductListing') -> Dict[str, Any]:
         """Map internal listing model to standardized marketplace row schema."""
-        first_image = listing.images[0].url if listing.images else None
+        image_urls = [img.url for img in getattr(listing, 'images', []) or []]
+        primary_image = self._select_primary_image_url(image_urls)
         seller = listing.seller
-        return {
+        seller_address = self._normalize_whitespace(getattr(seller, 'address', None) if seller else None)
+        state_province, zip_code = self._extract_address_parts(seller_address) if seller_address else (None, None)
+        item_number = listing.item_number
+        hs_code = None
+        if item_number and self._looks_like_hs_code(item_number):
+            hs_code = item_number
+            item_number = None
+        row: Dict[str, Any] = {
             'Listing Title': listing.title,
             'Listing URL': listing.listing_url,
-            'Image URL': first_image,
+            'Image URL': primary_image,
+            'All Image URLs': '; '.join([u for u in image_urls if u]),
             'Marketplace': 'Made-in-China',
             'Price': listing.price,
             'Currency': listing.currency,
             'Shipping': None,
-            'Units Available': listing.units_available,
-            'Item Number': listing.item_number,
+            'Units Available': getattr(listing, 'units_available', None),
+            'Item Number': item_number,
+            'HS Code': hs_code,
+            'Brand': getattr(listing, 'brand', None),
             'Seller Name': seller.name if seller else None,
             'Seller URL': seller.profile_url if seller else None,
             'Seller Business': getattr(seller, 'business_name', None) if seller else None,
-            'Seller Address': getattr(seller, 'address', None) if seller else None,
+            'Seller Address': seller_address,
+            'Seller State/Province': state_province,
+            'Seller Zip Code': zip_code,
+            'Seller Profile Picture': getattr(seller, 'profile_picture', None) if seller else None,
             'Seller Email': getattr(seller, 'email', None) if seller else None,
             'Seller Phone': getattr(seller, 'phone', None) if seller else None,
         }
+        return row
+
+    @staticmethod
+    def _normalize_whitespace(text: Optional[str]) -> Optional[str]:
+        if text is None:
+            return None
+        import re
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _select_primary_image_url(image_urls: List[str]) -> Optional[str]:
+        if not image_urls:
+            return None
+        # Prefer first non-placeholder image
+        for url in image_urls:
+            if not url:
+                continue
+            lower = url.lower()
+            if 'micstatic.com/common/img/space.png' in lower:
+                continue
+            return url
+        # Fallback to first
+        return image_urls[0]
+
+    @staticmethod
+    def _looks_like_hs_code(value: str) -> bool:
+        import re
+        v = value.strip()
+        return bool(re.fullmatch(r"\d{6,12}", v))
+
+    @staticmethod
+    def _extract_address_parts(address: str) -> tuple[Optional[str], Optional[str]]:
+        """Extract state/province and ZIP/Postal code from a free-form address (best-effort)."""
+        if not address:
+            return None, None
+        import re
+        addr = address
+        # ZIP: 5-6 digit sequences (CN often 6 digits)
+        zip_match = re.search(r"\b\d{5,6}\b", addr)
+        zip_code = zip_match.group(0) if zip_match else None
+        # Province: look for known Chinese provinces/regions
+        provinces = [
+            'Guangdong','Zhejiang','Liaoning','Jiangsu','Shandong','Fujian','Beijing','Shanghai','Tianjin',
+            'Chongqing','Sichuan','Henan','Hubei','Hunan','Hebei','Anhui','Jiangxi','Shanxi','Shaanxi',
+            'Guangxi','Yunnan','Guizhou','Hainan','Gansu','Qinghai','Ningxia','Xinjiang','Inner Mongolia',
+            'Tibet','Jilin','Heilongjiang','Hong Kong','Macau','Taiwan'
+        ]
+        state = None
+        for p in provinces:
+            if re.search(rf"\b{re.escape(p)}\b", addr, flags=re.IGNORECASE):
+                state = p
+                break
+        return state, zip_code
     
     def get_history(self, item_number: str, field_name: Optional[str] = None) -> List[HistoryEntry]:
         """Get history for a specific item and optionally field"""
