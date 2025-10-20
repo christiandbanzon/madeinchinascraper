@@ -3283,26 +3283,14 @@ class MadeInChinaScraper:
         return None
 
     def download_and_analyze_certificate(self, cert_url: str, cert_name: str) -> Dict[str, Any]:
-        """Download certificate and analyze for email addresses"""
+        """Download certificate and analyze for email addresses and QR payloads"""
         logger.info(f"Downloading and analyzing certificate: {cert_name}")
-        
+
         try:
-            # Download the certificate
-            response = self.session.get(cert_url, timeout=30)
-            response.raise_for_status()
-            
-            content_type = response.headers.get('content-type', '')
-            
-            if 'pdf' in content_type.lower():
-                return self._analyze_pdf_certificate(response.content, cert_name, cert_url)
-            elif 'image' in content_type.lower() or cert_url.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
-                return self._analyze_image_certificate(response.content, cert_name, cert_url)
-            else:
-                # Try to analyze as text
-                return self._analyze_text_certificate(response.text, cert_name, cert_url)
-                
+            analysis = self.pdf_extractor.analyze_url(cert_url, display_name=cert_name)
+            return analysis
         except Exception as e:
-            logger.error(f"Error downloading certificate {cert_name}: {e}")
+            logger.error(f"Error analyzing certificate {cert_name}: {e}")
             return {
                 'name': cert_name,
                 'url': cert_url,

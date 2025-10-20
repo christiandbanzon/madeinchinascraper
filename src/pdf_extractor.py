@@ -42,6 +42,15 @@ class PDFExtractor:
             if "application/pdf" in content_type or url.lower().endswith(".pdf"):
                 text = self._extract_text_from_pdf_bytes(response.content)
                 emails = self._extract_emails_from_text(text) if text else []
+                # QR scan within PDF images
+                qr_payloads = self._extract_qr_payloads_from_pdf_bytes(response.content)
+                if qr_payloads:
+                    # Extract any emails present in QR payloads
+                    for payload in qr_payloads:
+                        qr_emails = self._extract_emails_from_text(payload)
+                        for e in qr_emails:
+                            if e not in emails:
+                                emails.append(e)
                 sha, saved_path = self._persist_asset(response.content, suggested_ext=".pdf")
                 result.update({
                     "emails": emails,
@@ -50,6 +59,8 @@ class PDFExtractor:
                     "size_bytes": len(response.content),
                     "saved_path": saved_path,
                 })
+                if qr_payloads:
+                    result["qr_payloads"] = qr_payloads
                 return result
 
             # Handle images (OCR)
@@ -223,6 +234,56 @@ class PDFExtractor:
         if not pdf_bytes:
             return None
 
+    @staticmethod
+    def _extract_qr_payloads_from_pdf_bytes(pdf_bytes: bytes) -> List[str]:
+        """Attempt to extract and decode QR codes embedded as images in a PDF.
+
+        Best-effort: uses pdfplumber to locate image xrefs, extracts image bytes, decodes via pyzbar.
+        Returns list of decoded payload strings; empty list if none or on failure.
+        """
+        payloads: List[str] = []
+        try:
+            import pdfplumber  # type: ignore
+            from PIL import Image
+            from io import BytesIO
+            from pyzbar.pyzbar import decode as qr_decode
+
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                for page in pdf.pages:
+                    # page.images contains dicts with object_id (xref)
+                    for img_meta in page.images:
+                        try:
+                            xref = img_meta.get("object_id") or img_meta.get("xref")
+                            if xref is None:
+                                continue
+                            base_image = pdf.extract_image(xref)
+                            if not base_image:
+                                continue
+                            img_bytes = base_image.get("image")
+                            if not img_bytes:
+                                continue
+                            pil_img = Image.open(BytesIO(img_bytes))
+                            # Convert to RGB for safety
+                            try:
+                                pil_img = pil_img.convert("RGB")
+                            except Exception:
+                                pass
+                            decoded = qr_decode(pil_img)
+                            if decoded:
+                                for d in decoded:
+                                    try:
+                                        text = d.data.decode("utf-8", errors="ignore")
+                                    except Exception:
+                                        text = ""
+                                    if text and text not in payloads:
+                                        payloads.append(text)
+                        except Exception:
+                            # best-effort per image
+                            continue
+        except Exception:
+            return []
+        return payloads
+
         # Try PyPDF2
         try:
             import PyPDF2  # type: ignore
@@ -264,6 +325,43 @@ class PDFExtractor:
         """Run OCR on image content using Tesseract via pytesseract."""
         if not image_bytes:
             return None
+        try:
+            from PIL import Image
+            import pytesseract
+            from pyzbar.pyzbar import decode as qr_decode
+
+            with io.BytesIO(image_bytes) as bio:
+                img = Image.open(bio)
+                # Convert to RGB for safety (some formats are palette/CMYK)
+                try:
+                    img = img.convert("RGB")
+                except Exception:  # noqa: BLE001
+                    pass
+                # Basic preprocessing: grayscale + threshold
+                try:
+                    gray = img.convert('L')
+                    # Simple global threshold
+                    bw = gray.point(lambda p: 255 if p > 180 else 0, '1')
+                    text = pytesseract.image_to_string(bw, config='--psm 6')
+                    if not text.strip():
+                        text = pytesseract.image_to_string(gray, config='--psm 6')
+                    if not text.strip():
+                        text = pytesseract.image_to_string(img, config='--oem 1 --psm 6')
+                except Exception:
+                    text = pytesseract.image_to_string(img)
+                text = (text or "").strip()
+                # Try QR code decoding and append payloads
+                try:
+                    decoded = qr_decode(img)
+                    if decoded:
+                        qr_texts = [d.data.decode('utf-8', errors='ignore') for d in decoded]
+                        text = (text + "\n" + "\n".join(qr_texts)).strip()
+                except Exception:
+                    pass
+                return text or None
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"OCR failed: {e}")
+            return None
 
     @staticmethod
     def _guess_ext_from_ct(content_type: str) -> Optional[str]:
@@ -287,44 +385,6 @@ class PDFExtractor:
             with open(path, 'wb') as f:
                 f.write(content)
         return sha, path
-        try:
-            from PIL import Image
-            import pytesseract
-
-            with io.BytesIO(image_bytes) as bio:
-                img = Image.open(bio)
-                # Convert to RGB for safety (some formats are palette/CMYK)
-                try:
-                    img = img.convert("RGB")
-                except Exception:  # noqa: BLE001
-                    pass
-                # Basic preprocessing: grayscale + threshold
-                try:
-                    gray = img.convert('L')
-                    # Simple global threshold
-                    bw = gray.point(lambda p: 255 if p > 180 else 0, '1')
-                    text = pytesseract.image_to_string(bw, config='--psm 6')
-                    if not text.strip():
-                        text = pytesseract.image_to_string(gray, config='--psm 6')
-                    if not text.strip():
-                        text = pytesseract.image_to_string(img, config='--oem 1 --psm 6')
-                except Exception:
-                    text = pytesseract.image_to_string(img)
-                text = (text or "").strip()
-                # Try QR code decoding for hidden contact info
-                try:
-                    from pyzbar.pyzbar import decode as qr_decode
-                    decoded = qr_decode(img)
-                    if decoded:
-                        qr_texts = [d.data.decode('utf-8', errors='ignore') for d in decoded]
-                        # Append QR payloads to OCR text
-                        text = (text + "\n" + "\n".join(qr_texts)).strip()
-                except Exception:
-                    pass
-                return text or None
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"OCR failed: {e}")
-            return None
 
 
 
