@@ -43,8 +43,8 @@ ENV CHROME_DRIVER_PATH=/usr/bin/chromedriver
 # Expose port (if needed for web interface in future)
 EXPOSE 8000
 
-# Set the default command
-CMD ["python", "-m", "cli.main", "--help"]
+# Set the default command to run the API
+CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
 
 

@@ -9,7 +9,7 @@ services:
       - ./logs:${LOGS_DIR:-/app/logs}
       - ./history:${HISTORY_DIR:-/app/history}
     ports:
-      - "8000:8000"
+      - "18000:8000"
     environment:
       DISPLAY: ${DISPLAY:-:99}
       CHROME_BIN: ${CHROME_BIN:-/usr/bin/google-chrome}
