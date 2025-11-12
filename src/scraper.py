@@ -1967,7 +1967,10 @@ class MadeInChinaScraper:
         return None
 
     def get_company_profile(self, company_url: str) -> Optional[Dict[str, Any]]:
-        """Get detailed company profile information including contact details"""
+        """Get detailed company profile information including contact details.
+
+        Enhancements: crawl related contact/about pages and decode obfuscated emails.
+        """
         logger.info(f"Getting company profile from: {company_url}")
         
         try:
@@ -2002,6 +2005,13 @@ class MadeInChinaScraper:
                 'scraped_at': datetime.now().isoformat()
             }
             
+            # Crawl contact/about pages for additional emails/phones
+            extras = self._crawl_contact_pages(company_url)
+            if extras.get('emails'):
+                profile_data['email'] = profile_data.get('email') or extras['emails'][0]
+            if extras.get('phone_numbers'):
+                profile_data['phone'] = profile_data.get('phone') or extras['phone_numbers'][0]
+
             return profile_data
             
         except Exception as e:
@@ -2033,12 +2043,84 @@ class MadeInChinaScraper:
                 'scraped_at': datetime.now().isoformat()
             }
             
+            # Crawl contact/about pages for additional emails/phones (requests based)
+            extras = self._crawl_contact_pages(company_url)
+            if extras.get('emails'):
+                profile_data['email'] = profile_data.get('email') or extras['emails'][0]
+            if extras.get('phone_numbers'):
+                profile_data['phone'] = profile_data.get('phone') or extras['phone_numbers'][0]
+
             return profile_data
             
         except Exception as e:
             logger.error(f"Error getting company profile with Selenium: {e}")
             return None
 
+    def _crawl_contact_pages(self, base_url: str) -> Dict[str, Any]:
+        """Best-effort crawl of contact/about pages and decode obfuscations."""
+        import re
+        from urllib.parse import urljoin
+        pages = [base_url]
+        candidates = ['contact', 'contacts', 'about', 'about-us', 'profile', 'company-profile']
+        for c in candidates:
+            pages.append(urljoin(base_url if base_url.endswith('/') else base_url+'/', c))
+        emails: list[str] = []
+        phones: list[str] = []
+        seen = set()
+        for url in pages:
+            if url in seen:
+                continue
+            seen.add(url)
+            try:
+                resp = self.session.get(url, timeout=20)
+                if resp.status_code >= 400:
+                    continue
+                text = resp.text
+                text = self._deobfuscate_text(text)
+                emails += self.pdf_extractor._extract_emails_from_text(text)
+                phones += self._extract_phones(text)
+            except Exception:
+                continue
+        def dedup(xs: list[str]) -> list[str]:
+            out, s = [], set()
+            for x in xs:
+                if x not in s:
+                    s.add(x); out.append(x)
+            return out
+        return {'emails': dedup(emails), 'phone_numbers': dedup(phones)}
+
+    @staticmethod
+    def _deobfuscate_text(text: str) -> str:
+        """Handle simple obfuscations like [at], (at), {dot}, ' at ', ' dot '."""
+        t = text
+        patterns = [
+            (r"\s*\[\s*at\s*\]\s*", "@"),
+            (r"\s*\(\s*at\s*\)\s*", "@"),
+            (r"\s+at\s+", "@"),
+            (r"\s*\{\s*dot\s*\}\s*", "."),
+            (r"\s*\[\s*dot\s*\]\s*", "."),
+            (r"\s*\(\s*dot\s*\)\s*", "."),
+            (r"\s+dot\s+", "."),
+        ]
+        import re
+        for pat, repl in patterns:
+            t = re.sub(pat, repl, t, flags=re.IGNORECASE)
+        return t
+
+    @staticmethod
+    def _extract_phones(text: str) -> list[str]:
+        """Extract international-ish phone numbers (best-effort)."""
+        import re
+        phone_re = re.compile(r"(?:\+\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{3,4}")
+        cand = phone_re.findall(text or "")
+        out: list[str] = []
+        seen = set()
+        for c in cand:
+            c2 = re.sub(r"\s+", " ", c).strip()
+            if len(re.sub(r"\D", "", c2)) >= 7 and c2 not in seen:
+                seen.add(c2)
+                out.append(c2)
+        return out
     def _extract_company_name(self, soup: BeautifulSoup) -> Optional[str]:
         """Extract company name from company profile page"""
         try:

@@ -19,6 +19,39 @@ class PDFExtractor:
         self.session = session or requests.Session()
         self.session.headers.update(HEADERS)
         self.request_timeout_seconds = request_timeout_seconds
+        self._user_agents = [
+            HEADERS.get('User-Agent', ''),
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36'
+        ]
+        self._ua_index = 0
+
+    def _rotate_user_agent(self) -> None:
+        self._ua_index = (self._ua_index + 1) % len(self._user_agents)
+        self.session.headers['User-Agent'] = self._user_agents[self._ua_index]
+
+    def _get_with_backoff(self, url: str, max_retries: int = 4) -> requests.Response:
+        delay = 1.0
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                resp = self.session.get(url, timeout=self.request_timeout_seconds, allow_redirects=True)
+                # Rotate UA on 429/493/5xx
+                if resp.status_code in (429, 493) or 500 <= resp.status_code < 600:
+                    self._rotate_user_agent()
+                    time.sleep(delay)
+                    delay = min(delay * 2, 8)
+                    last_exc = Exception(f"HTTP {resp.status_code}")
+                    continue
+                resp.raise_for_status()
+                return resp
+            except Exception as e:  # noqa: BLE001
+                last_exc = e
+                self._rotate_user_agent()
+                time.sleep(delay)
+                delay = min(delay * 2, 8)
+        raise last_exc or Exception('request failed')
 
     def analyze_url(self, url: str, display_name: Optional[str] = None) -> Dict:
         """Download a certificate (PDF or landing page), extract emails, and return analysis details.
@@ -35,8 +68,7 @@ class PDFExtractor:
 
         try:
             # First attempt: direct GET
-            response = self.session.get(url, timeout=self.request_timeout_seconds)
-            response.raise_for_status()
+            response = self._get_with_backoff(url)
             content_type = response.headers.get("content-type", "").lower()
 
             if "application/pdf" in content_type or url.lower().endswith(".pdf"):
@@ -119,8 +151,7 @@ class PDFExtractor:
 
             for pdf_url in unique_pdf_srcs[:3]:  # limit attempts
                 try:
-                    pdf_resp = self.session.get(pdf_url, timeout=self.request_timeout_seconds)
-                    pdf_resp.raise_for_status()
+                    pdf_resp = self._get_with_backoff(pdf_url)
                     text = self._extract_text_from_pdf_bytes(pdf_resp.content)
                     emails = self._extract_emails_from_text(text) if text else []
                     if emails:
@@ -151,8 +182,7 @@ class PDFExtractor:
 
             for img_url in unique_img_srcs[:3]:
                 try:
-                    img_resp = self.session.get(img_url, timeout=self.request_timeout_seconds)
-                    img_resp.raise_for_status()
+                    img_resp = self._get_with_backoff(img_url)
                     text = self._extract_text_from_image_bytes(img_resp.content)
                     emails = self._extract_emails_from_text(text) if text else []
                     if emails:

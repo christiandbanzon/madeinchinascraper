@@ -354,8 +354,16 @@ class DataManager:
             if not url:
                 continue
             lower = url.lower()
-            if 'micstatic.com/common/img/space.png' in lower:
+            # Skip known placeholders/icons/svgs
+            if (
+                'micstatic.com/common/img/space.png' in lower or
+                '/icon/' in lower or '/logo/' in lower or '/landing/' in lower or
+                lower.endswith('.svg')
+            ):
                 continue
+            # Prefer standard image formats
+            if any(lower.endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff')):
+                return url
             return url
         # Fallback to first
         return image_urls[0]

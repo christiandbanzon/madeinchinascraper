@@ -20,3 +20,7 @@ tools/
 # Personal notes (not for repo)
 daily_report_*.md
 
+# Generated search exports (occasionally written to repo root)
+search_*.csv
+search_*.json
+
